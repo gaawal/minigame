@@ -1,1 +1,157 @@
-html
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <title>3D 轨迹弹球游戏</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <!-- TailwindCSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Vue 3 -->
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <!-- Three.js -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.min.js"></script>
+</head>
+<body class="bg-gray-900 flex items-center justify-center h-screen overflow-hidden">
+
+<div id="app" class="w-full h-full relative">
+  <!-- 游戏画布 -->
+  <canvas ref="gameCanvas" class="absolute inset-0"></canvas>
+  <!-- 操作提示 -->
+  <div class="absolute bottom-4 w-full text-center text-white text-sm">
+    点击拖动来控制方向，松开发射
+  </div>
+</div>
+
+<script>
+const { createApp, onMounted, ref } = Vue;
+
+createApp({
+  setup() {
+    const gameCanvas = ref(null);
+
+    onMounted(() => {
+      // 基础场景
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x111111);
+
+      const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);
+      camera.position.set(0, 5, 10);
+
+      const renderer = new THREE.WebGLRenderer({ canvas: gameCanvas.value, antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+
+      // 光源
+      const light = new THREE.DirectionalLight(0xffffff, 1);
+      light.position.set(5, 10, 7);
+      scene.add(light);
+
+      // 地板
+      const floorGeometry = new THREE.PlaneGeometry(20, 20);
+      const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x222222 });
+      const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+      floor.rotation.x = -Math.PI / 2;
+      scene.add(floor);
+
+      // 墙壁
+      const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x333333, side: THREE.DoubleSide });
+      const wallGeometry = new THREE.PlaneGeometry(20, 10);
+      const backWall = new THREE.Mesh(wallGeometry, wallMaterial);
+      backWall.position.z = -10;
+      backWall.position.y = 5;
+      scene.add(backWall);
+
+      const frontWall = new THREE.Mesh(wallGeometry, wallMaterial);
+      frontWall.position.z = 10;
+      frontWall.rotation.y = Math.PI;
+      frontWall.position.y = 5;
+      scene.add(frontWall);
+
+      const leftWall = new THREE.Mesh(new THREE.PlaneGeometry(20, 10), wallMaterial);
+      leftWall.position.x = -10;
+      leftWall.rotation.y = Math.PI / 2;
+      leftWall.position.y = 5;
+      scene.add(leftWall);
+
+      const rightWall = new THREE.Mesh(new THREE.PlaneGeometry(20, 10), wallMaterial);
+      rightWall.position.x = 10;
+      rightWall.rotation.y = -Math.PI / 2;
+      rightWall.position.y = 5;
+      scene.add(rightWall);
+
+      // 小球
+      const ballGeometry = new THREE.SphereGeometry(0.3, 32, 32);
+      const ballMaterial = new THREE.MeshStandardMaterial({ color: 0xff4444 });
+      const ball = new THREE.Mesh(ballGeometry, ballMaterial);
+      ball.position.set(0, 0.3, 0);
+      scene.add(ball);
+
+      let velocity = new THREE.Vector3(0, 0, 0);
+      let isDragging = false;
+      let dragStart = null;
+
+      // 触摸/鼠标控制
+      const getTouchPos = (e) => {
+        if (e.touches && e.touches.length > 0) {
+          return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        } else {
+          return { x: e.clientX, y: e.clientY };
+        }
+      };
+
+      const onDown = (e) => {
+        isDragging = true;
+        dragStart = getTouchPos(e);
+      };
+
+      const onUp = (e) => {
+        if (isDragging && dragStart) {
+          const end = getTouchPos(e);
+          const dx = end.x - dragStart.x;
+          const dz = end.y - dragStart.y;
+          velocity = new THREE.Vector3(dx * 0.01, 0, dz * 0.01);
+        }
+        isDragging = false;
+      };
+
+      window.addEventListener("mousedown", onDown);
+      window.addEventListener("mouseup", onUp);
+      window.addEventListener("touchstart", onDown);
+      window.addEventListener("touchend", onUp);
+
+      // 动画
+      function animate() {
+        requestAnimationFrame(animate);
+
+        // 球运动
+        ball.position.add(velocity);
+
+        // 边界反弹
+        if (ball.position.x > 9.7 || ball.position.x < -9.7) {
+          velocity.x *= -1;
+        }
+        if (ball.position.z > 9.7 || ball.position.z < -9.7) {
+          velocity.z *= -1;
+        }
+
+        // 摩擦减速
+        velocity.multiplyScalar(0.99);
+
+        renderer.render(scene, camera);
+      }
+      animate();
+
+      // 自适应屏幕
+      window.addEventListener("resize", () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+    });
+
+    return { gameCanvas };
+  }
+}).mount("#app");
+</script>
+
+</body>
+</html>
