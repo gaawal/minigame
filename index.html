@@ -3,17 +3,14 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>3D 轨迹弹球游戏（国内CDN版）</title>
+  <title>3D 方块拼图小游戏</title>
 
-  <!-- TailwindCSS (BootCDN) -->
+  <!-- TailwindCSS -->
   <script src="https://cdn.bootcdn.net/ajax/libs/tailwindcss/3.4.1/tailwind.min.js"></script>
-
-  <!-- Vue 3 (BootCDN) -->
+  <!-- Vue 3 -->
   <script src="https://cdn.bootcdn.net/ajax/libs/vue/3.4.21/vue.global.prod.min.js"></script>
-
-  <!-- Three.js (BootCDN) -->
+  <!-- Three.js -->
   <script src="https://cdn.bootcdn.net/ajax/libs/three.js/r152/three.min.js"></script>
-  <!-- OrbitControls -->
   <script src="https://cdn.bootcdn.net/ajax/libs/three.js/r152/examples/js/controls/OrbitControls.min.js"></script>
 
   <style>
@@ -22,94 +19,160 @@
   </style>
 </head>
 <body>
-  <div id="app" class="h-full flex">
-    <!-- 左侧画布 -->
-    <div id="game" class="flex-1 relative">
-      <div ref="overlay" class="absolute top-4 left-4 text-white z-10">
-        <div class="bg-black/40 rounded p-2 text-sm">
-          <div>得分: <span class="font-bold text-yellow-300">{{ score }}</span></div>
-          <div>球剩余: <span class="font-bold">{{ ballsLeft }}</span></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- 右侧面板 -->
-    <div class="w-80 bg-gray-900 text-white p-4">
-      <h2 class="text-xl font-bold mb-4">3D 轨迹弹球</h2>
-      <div class="mb-2">当前得分: <span class="text-yellow-300">{{ score }}</span></div>
-      <button @click="spawnBall()" class="px-3 py-2 bg-green-600 hover:bg-green-500 rounded text-white text-sm">发射球</button>
-      <button @click="resetGame()" class="px-3 py-2 bg-red-600 hover:bg-red-500 rounded text-white text-sm ml-2">重置</button>
+<div id="app" class="h-full flex">
+  <!-- 游戏画布 -->
+  <div id="game" class="flex-1 relative">
+    <div class="absolute top-4 left-4 bg-black/50 text-white p-2 rounded">
+      得分: <span class="text-yellow-300 font-bold">{{ score }}</span>
+      <div v-if="gameOver" class="mt-2 text-green-400 font-bold">拼图完成！</div>
     </div>
   </div>
 
-  <script>
-  const { createApp } = Vue;
-  createApp({
-    data() {
-      return {
-        score: 0,
-        ballsLeft: 3,
-        scene: null, renderer: null, camera: null,
-        balls: [],
-        lastTime: performance.now()
-      };
+  <!-- 控制面板 -->
+  <div class="w-80 bg-gray-900 text-white p-4">
+    <h2 class="text-xl font-bold mb-4">3D 方块拼图</h2>
+    <p class="mb-2">点击正确的方块位置，完成目标拼图。</p>
+    <button @click="resetGame" class="px-3 py-2 bg-blue-600 hover:bg-blue-500 rounded text-sm">重新开始</button>
+  </div>
+</div>
+
+<script>
+const { createApp } = Vue;
+
+createApp({
+  data() {
+    return {
+      score: 0,
+      gameOver: false,
+      targetSequence: [],   // 红色目标序列
+      currentStep: 0,       // 当前要点的方块
+      scene: null, camera: null, renderer: null,
+      raycaster: null, mouse: new THREE.Vector2(),
+      clickableBlocks: []
+    }
+  },
+  methods: {
+    initThree(container) {
+      const width = container.clientWidth, height = container.clientHeight;
+
+      this.renderer = new THREE.WebGLRenderer({ antialias:true });
+      this.renderer.setSize(width, height);
+      container.appendChild(this.renderer.domElement);
+
+      this.scene = new THREE.Scene();
+      this.scene.background = new THREE.Color(0x111827);
+
+      this.camera = new THREE.PerspectiveCamera(45, width/height, 0.1, 1000);
+      this.camera.position.set(8,8,12);
+
+      const controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
+      controls.enableDamping = true;
+
+      const light = new THREE.DirectionalLight(0xffffff, 1);
+      light.position.set(10,10,10);
+      this.scene.add(light);
+
+      this.raycaster = new THREE.Raycaster();
+
+      this.generateBoard();
+      this.generatePuzzle();
+
+      window.addEventListener('click', this.onClick);
+
+      const animate = () => {
+        requestAnimationFrame(animate);
+        controls.update();
+        this.renderer.render(this.scene, this.camera);
+      }
+      animate();
     },
-    methods: {
-      initThree(container) {
-        const width = container.clientWidth, height = container.clientHeight;
-        this.renderer = new THREE.WebGLRenderer({ antialias: true });
-        this.renderer.setSize(width, height);
-        container.appendChild(this.renderer.domElement);
+    generateBoard() {
+      // 生成 5x5 方格地板
+      const gridSize = 5;
+      const material = new THREE.MeshStandardMaterial({ color:0x444444 });
+      for(let x=0;x<gridSize;x++){
+        for(let z=0;z<gridSize;z++){
+          const tile = new THREE.Mesh(
+            new THREE.BoxGeometry(1,0.2,1),
+            material.clone()
+          );
+          tile.position.set(x - gridSize/2, -0.1, z - gridSize/2);
+          this.scene.add(tile);
 
-        this.scene = new THREE.Scene();
-        this.scene.background = new THREE.Color(0x0b0f1a);
-
-        this.camera = new THREE.PerspectiveCamera(50, width/height, 0.1, 200);
-        this.camera.position.set(0, 25, 28);
-        this.camera.lookAt(0,0,0);
-
-        const light = new THREE.DirectionalLight(0xffffff, 1);
-        light.position.set(10,20,10);
-        this.scene.add(light);
-
-        const floor = new THREE.Mesh(
-          new THREE.BoxGeometry(20,1,40),
-          new THREE.MeshStandardMaterial({ color:0x1a3a2a })
-        );
-        floor.position.y=-0.5;
-        this.scene.add(floor);
-
-        this.spawnBall();
-
-        const animate = () => {
-          this.renderer.render(this.scene, this.camera);
-          requestAnimationFrame(animate);
-        };
-        animate();
-      },
-      spawnBall() {
-        if(this.ballsLeft<=0) return;
-        const ball = new THREE.Mesh(
-          new THREE.SphereGeometry(1,16,12),
-          new THREE.MeshStandardMaterial({color:0x66b2ff})
-        );
-        ball.position.set(0,5,0);
-        this.scene.add(ball);
-        this.balls.push(ball);
-        this.ballsLeft--;
-      },
-      resetGame() {
-        this.balls.forEach(b=>this.scene.remove(b));
-        this.balls = [];
-        this.score=0;
-        this.ballsLeft=3;
+          // 可点击方块
+          const block = new THREE.Mesh(
+            new THREE.BoxGeometry(0.9,0.9,0.9),
+            new THREE.MeshStandardMaterial({ color:0x3b82f6 })
+          );
+          block.position.set(tile.position.x, 0.5, tile.position.z);
+          block.userData = { x, z };
+          this.scene.add(block);
+          this.clickableBlocks.push(block);
+        }
       }
     },
-    mounted() {
-      const container=document.getElementById('game');
-      this.initThree(container);
+    generatePuzzle() {
+      // 随机生成目标拼图路径
+      this.targetSequence = [];
+      const used = new Set();
+      while(this.targetSequence.length < 4){
+        const x = Math.floor(Math.random()*5);
+        const z = Math.floor(Math.random()*5);
+        const key = `${x},${z}`;
+        if(!used.has(key)){
+          used.add(key);
+          this.targetSequence.push({x,z});
+        }
+      }
+      // 高亮红色目标（提示玩家）
+      this.targetSequence.forEach((pos,i)=>{
+        const marker = new THREE.Mesh(
+          new THREE.BoxGeometry(0.9,0.1,0.9),
+          new THREE.MeshStandardMaterial({ color:0xef4444 })
+        );
+        marker.position.set(pos.x-2.5,0,pos.z-2.5);
+        this.scene.add(marker);
+      });
+    },
+    onClick(event) {
+      if(this.gameOver) return;
+      const rect = this.renderer.domElement.getBoundingClientRect();
+      this.mouse.x = ((event.clientX-rect.left)/rect.width)*2-1;
+      this.mouse.y = -((event.clientY-rect.top)/rect.height)*2+1;
+
+      this.raycaster.setFromCamera(this.mouse, this.camera);
+      const intersects = this.raycaster.intersectObjects(this.clickableBlocks);
+      if(intersects.length>0){
+        const block = intersects[0].object;
+        const {x,z} = block.userData;
+        const target = this.targetSequence[this.currentStep];
+        if(x===target.x && z===target.z){
+          block.material.color.set(0x22c55e); // 绿色表示正确
+          this.score++;
+          this.currentStep++;
+          if(this.currentStep>=this.targetSequence.length){
+            this.gameOver = true;
+          }
+        }else{
+          block.material.color.set(0xfacc15); // 错误点黄色
+        }
+      }
+    },
+    resetGame() {
+      // 重置场景
+      this.score=0; this.gameOver=false; this.currentStep=0;
+      this.targetSequence=[];
+      this.clickableBlocks.forEach(b=>this.scene.remove(b));
+      this.clickableBlocks=[];
+      this.scene.clear();
+      this.initThree(document.getElementById('game'));
     }
-  }).mount('#app');
-  </script>
+  },
+  mounted() {
+    const container=document.getElementById('game');
+    this.initThree(container);
+  }
+}).mount('#app');
+</script>
 </body>
 </html>
