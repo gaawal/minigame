@@ -6,12 +6,12 @@
   <title>3D 方块拼图小游戏</title>
 
   <!-- TailwindCSS -->
-  <script src="https://cdn.bootcdn.net/ajax/libs/tailwindcss/3.4.1/tailwind.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tailwindcss@3.4.1/lib/index.min.js"></script>
   <!-- Vue 3 -->
-  <script src="https://cdn.bootcdn.net/ajax/libs/vue/3.4.21/vue.global.prod.min.js"></script>
+  <script src="https://unpkg.com/vue@3.4.21/dist/vue.global.prod.js"></script>
   <!-- Three.js -->
-  <script src="https://cdn.bootcdn.net/ajax/libs/three.js/r152/three.min.js"></script>
-  <script src="https://cdn.bootcdn.net/ajax/libs/three.js/r152/examples/js/controls/OrbitControls.min.js"></script>
+  <script src="https://unpkg.com/three@0.152.2/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.152.2/examples/js/controls/OrbitControls.js"></script>
 
   <style>
     html,body,#app { height: 100%; margin: 0; }
@@ -30,8 +30,8 @@
 
   <!-- 控制面板 -->
   <div class="w-80 bg-gray-900 text-white p-4">
-    <h2 class="text-xl font-bold mb-4">3D 方块拼图</h2>
-    <p class="mb-2">点击正确的方块位置，完成目标拼图。</p>
+    <h2 class="text-xl font-bold mb-4">🧩 3D 方块拼图</h2>
+    <p class="mb-2">按顺序点击蓝色方块，完成目标拼图。</p>
     <button @click="resetGame" class="px-3 py-2 bg-blue-600 hover:bg-blue-500 rounded text-sm">重新开始</button>
   </div>
 </div>
@@ -71,6 +71,7 @@ createApp({
       const light = new THREE.DirectionalLight(0xffffff, 1);
       light.position.set(10,10,10);
       this.scene.add(light);
+      this.scene.add(new THREE.AmbientLight(0x404040));
 
       this.raycaster = new THREE.Raycaster();
 
@@ -124,8 +125,8 @@ createApp({
           this.targetSequence.push({x,z});
         }
       }
-      // 高亮红色目标（提示玩家）
-      this.targetSequence.forEach((pos,i)=>{
+      // 红色标记目标
+      this.targetSequence.forEach((pos)=>{
         const marker = new THREE.Mesh(
           new THREE.BoxGeometry(0.9,0.1,0.9),
           new THREE.MeshStandardMaterial({ color:0xef4444 })
@@ -147,19 +148,18 @@ createApp({
         const {x,z} = block.userData;
         const target = this.targetSequence[this.currentStep];
         if(x===target.x && z===target.z){
-          block.material.color.set(0x22c55e); // 绿色表示正确
+          block.material.color.set(0x22c55e); // 绿色正确
           this.score++;
           this.currentStep++;
           if(this.currentStep>=this.targetSequence.length){
             this.gameOver = true;
           }
         }else{
-          block.material.color.set(0xfacc15); // 错误点黄色
+          block.material.color.set(0xfacc15); // 黄色错误
         }
       }
     },
     resetGame() {
-      // 重置场景
       this.score=0; this.gameOver=false; this.currentStep=0;
       this.targetSequence=[];
       this.clickableBlocks.forEach(b=>this.scene.remove(b));
@@ -169,8 +169,7 @@ createApp({
     }
   },
   mounted() {
-    const container=document.getElementById('game');
-    this.initThree(container);
+    this.initThree(document.getElementById('game'));
   }
 }).mount('#app');
 </script>
