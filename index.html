@@ -2,176 +2,542 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>3D 方块拼图小游戏</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover,user-scalable=no" />
+  <title>3D 轨迹球 - 竖屏迷你游戏</title>
 
-  <!-- TailwindCSS -->
-  <script src="https://cdn.jsdelivr.net/npm/tailwindcss@3.4.1/lib/index.min.js"></script>
-  <!-- Vue 3 -->
-  <script src="https://unpkg.com/vue@3.4.21/dist/vue.global.prod.js"></script>
-  <!-- Three.js -->
-  <script src="https://unpkg.com/three@0.152.2/build/three.min.js"></script>
-  <script src="https://unpkg.com/three@0.152.2/examples/js/controls/OrbitControls.js"></script>
+  <!-- Tailwind CDN (Play CDN 用于快速演示) -->
+  <script src="https://cdn.tailwindcss.com"></script>
 
+  <!-- Vue 3 CDN (UMD) -->
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+
+  <!-- Three.js CDN -->
+  <script src="https://unpkg.com/three@0.161.0/build/three.min.js"></script>
+
+  <!-- Optional: 简单性能提示 -->
   <style>
-    html,body,#app { height: 100%; margin: 0; }
-    canvas { display: block; }
+    html,body,#app { height: 100%; margin: 0; background: linear-gradient(#0f172a,#021025); color: #fff; }
+    canvas { display:block; }
+    /* 保证竖屏优先的布局 */
+    #game-wrap { height: 100vh; width: 100vw; display:flex; align-items:flex-start; justify-content:center; }
+    /* HUD 在顶端，半透明 */
+    .hud { position: absolute; top: 12px; left: 12px; right: 12px; display:flex; justify-content:space-between; gap:10px; z-index: 20; pointer-events: none;}
+    .hud .panel { pointer-events: auto; background: rgba(2,6,23,0.55); padding:8px 12px; border-radius:10px; backdrop-filter: blur(6px); }
+    /* 屏幕底部的虚拟摇杆区域（当没有陀螺仪） */
+    #touchpad { position: absolute; bottom: 18px; left: 50%; transform: translateX(-50%); width: 220px; height: 120px; z-index: 20; }
+    #joystick { width:120px; height:120px; border-radius:999px; background: rgba(255,255,255,0.04); display:flex; align-items:center; justify-content:center; }
+    #knob { width:42px; height:42px; border-radius:999px; background: rgba(255,255,255,0.14); touch-action:none; }
+    /* 小屏提示 */
+    .hint { font-size:12px; opacity:0.85 }
   </style>
 </head>
 <body>
-<div id="app" class="h-full flex">
-  <!-- 游戏画布 -->
-  <div id="game" class="flex-1 relative">
-    <div class="absolute top-4 left-4 bg-black/50 text-white p-2 rounded">
-      得分: <span class="text-yellow-300 font-bold">{{ score }}</span>
-      <div v-if="gameOver" class="mt-2 text-green-400 font-bold">拼图完成！</div>
+  <div id="app">
+    <div id="game-wrap" class="relative">
+      <!-- HUD -->
+      <div class="hud">
+        <div class="panel flex items-center gap-3">
+          <div>
+            <div class="text-sm">分数</div>
+            <div class="text-2xl font-bold">{{ score }}</div>
+          </div>
+          <div class="ml-2">
+            <div class="text-sm">生命</div>
+            <div class="text-lg font-medium">❤ x {{ lives }}</div>
+          </div>
+        </div>
+
+        <div class="panel flex items-center gap-3">
+          <div class="text-sm">等级</div>
+          <div class="text-xl font-semibold">{{ level }}</div>
+        </div>
+
+        <div class="panel flex items-center gap-2">
+          <button @click="togglePause" class="px-3 py-1 rounded bg-slate-800/60 hover:bg-slate-700/80"> {{ running ? '暂停' : '继续' }} </button>
+          <button @click="restart" class="px-3 py-1 rounded bg-red-700/60 hover:bg-red-600/80">重启</button>
+        </div>
+      </div>
+
+      <!-- 三维画布容器 -->
+      <div id="canvas-container" style="width:100%;max-width:600px; height:calc(100vh - 0px); pointer-events: none;"></div>
+
+      <!-- 底部触屏操作（在没有陀螺仪时可用） -->
+      <div id="touchpad" v-show="!gyroAvailable" class="flex flex-col items-center">
+        <div id="joystick" class="flex items-center justify-center">
+          <div id="knob" ref="knob"></div>
+        </div>
+        <div class="mt-2 hint">滑动控制球（陀螺仪不可用时显示）</div>
+      </div>
+
+      <!-- 弹窗：游戏开始/权限请求 -->
+      <div v-if="!started" class="absolute inset-0 flex items-center justify-center z-30">
+        <div class="bg-slate-900/80 p-6 rounded-lg text-center">
+          <h2 class="text-2xl font-bold mb-2">3D 轨迹球 · 迷你游戏</h2>
+          <p class="mb-4">摇动手机（或滑动摇杆）控制球在区域内躲避敌人与障碍，收集点点加分并升级。竖屏优先。</p>
+          <div class="flex gap-3 justify-center">
+            <button @click="startAndRequestSensor" class="px-4 py-2 rounded bg-emerald-600 hover:bg-emerald-500">开始（授权陀螺仪）</button>
+            <button @click="startWithoutGyro" class="px-4 py-2 rounded bg-slate-700 hover:bg-slate-600">开始（不授权）</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 结束提示 -->
+      <div v-if="gameOver" class="absolute inset-0 flex items-center justify-center z-40">
+        <div class="bg-black/70 p-6 rounded-lg text-center">
+          <h2 class="text-3xl font-bold mb-2">游戏结束</h2>
+          <p class="mb-4">最终分数：<span class="font-mono">{{ score }}</span></p>
+          <div class="flex gap-3 justify-center">
+            <button @click="restart" class="px-4 py-2 rounded bg-amber-500 hover:bg-amber-400">再来一次</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
-  <!-- 控制面板 -->
-  <div class="w-80 bg-gray-900 text-white p-4">
-    <h2 class="text-xl font-bold mb-4">🧩 3D 方块拼图</h2>
-    <p class="mb-2">按顺序点击蓝色方块，完成目标拼图。</p>
-    <button @click="resetGame" class="px-3 py-2 bg-blue-600 hover:bg-blue-500 rounded text-sm">重新开始</button>
-  </div>
-</div>
+  <script>
+  const { createApp, ref, onMounted } = Vue;
 
-<script>
-const { createApp } = Vue;
-
-createApp({
-  data() {
-    return {
-      score: 0,
-      gameOver: false,
-      targetSequence: [],   // 红色目标序列
-      currentStep: 0,       // 当前要点的方块
-      scene: null, camera: null, renderer: null,
-      raycaster: null, mouse: new THREE.Vector2(),
-      clickableBlocks: []
-    }
-  },
-  methods: {
-    initThree(container) {
-      const width = container.clientWidth, height = container.clientHeight;
-
-      this.renderer = new THREE.WebGLRenderer({ antialias:true });
-      this.renderer.setSize(width, height);
-      container.appendChild(this.renderer.domElement);
-
-      this.scene = new THREE.Scene();
-      this.scene.background = new THREE.Color(0x111827);
-
-      this.camera = new THREE.PerspectiveCamera(45, width/height, 0.1, 1000);
-      this.camera.position.set(8,8,12);
-
-      const controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
-      controls.enableDamping = true;
-
-      const light = new THREE.DirectionalLight(0xffffff, 1);
-      light.position.set(10,10,10);
-      this.scene.add(light);
-      this.scene.add(new THREE.AmbientLight(0x404040));
-
-      this.raycaster = new THREE.Raycaster();
-
-      this.generateBoard();
-      this.generatePuzzle();
-
-      window.addEventListener('click', this.onClick);
-
-      const animate = () => {
-        requestAnimationFrame(animate);
-        controls.update();
-        this.renderer.render(this.scene, this.camera);
-      }
-      animate();
-    },
-    generateBoard() {
-      // 生成 5x5 方格地板
-      const gridSize = 5;
-      const material = new THREE.MeshStandardMaterial({ color:0x444444 });
-      for(let x=0;x<gridSize;x++){
-        for(let z=0;z<gridSize;z++){
-          const tile = new THREE.Mesh(
-            new THREE.BoxGeometry(1,0.2,1),
-            material.clone()
-          );
-          tile.position.set(x - gridSize/2, -0.1, z - gridSize/2);
-          this.scene.add(tile);
-
-          // 可点击方块
-          const block = new THREE.Mesh(
-            new THREE.BoxGeometry(0.9,0.9,0.9),
-            new THREE.MeshStandardMaterial({ color:0x3b82f6 })
-          );
-          block.position.set(tile.position.x, 0.5, tile.position.z);
-          block.userData = { x, z };
-          this.scene.add(block);
-          this.clickableBlocks.push(block);
-        }
+  createApp({
+    data() {
+      return {
+        score: 0,
+        lives: 3,
+        level: 1,
+        running: true,
+        started: false,
+        gameOver: false,
+        gyroAvailable: false,
+        // 控制输入向量（x, z），范围 -1..1（x 横向, z 纵深）
+        inputX: 0, inputZ: 0,
       }
     },
-    generatePuzzle() {
-      // 随机生成目标拼图路径
-      this.targetSequence = [];
-      const used = new Set();
-      while(this.targetSequence.length < 4){
-        const x = Math.floor(Math.random()*5);
-        const z = Math.floor(Math.random()*5);
-        const key = `${x},${z}`;
-        if(!used.has(key)){
-          used.add(key);
-          this.targetSequence.push({x,z});
-        }
-      }
-      // 红色标记目标
-      this.targetSequence.forEach((pos)=>{
-        const marker = new THREE.Mesh(
-          new THREE.BoxGeometry(0.9,0.1,0.9),
-          new THREE.MeshStandardMaterial({ color:0xef4444 })
-        );
-        marker.position.set(pos.x-2.5,0,pos.z-2.5);
-        this.scene.add(marker);
-      });
-    },
-    onClick(event) {
-      if(this.gameOver) return;
-      const rect = this.renderer.domElement.getBoundingClientRect();
-      this.mouse.x = ((event.clientX-rect.left)/rect.width)*2-1;
-      this.mouse.y = -((event.clientY-rect.top)/rect.height)*2+1;
-
-      this.raycaster.setFromCamera(this.mouse, this.camera);
-      const intersects = this.raycaster.intersectObjects(this.clickableBlocks);
-      if(intersects.length>0){
-        const block = intersects[0].object;
-        const {x,z} = block.userData;
-        const target = this.targetSequence[this.currentStep];
-        if(x===target.x && z===target.z){
-          block.material.color.set(0x22c55e); // 绿色正确
-          this.score++;
-          this.currentStep++;
-          if(this.currentStep>=this.targetSequence.length){
-            this.gameOver = true;
+    methods: {
+      togglePause() {
+        this.running = !this.running;
+      },
+      restart() {
+        // 为简单：重新加载页面状态（也可以重置 scene 状态）
+        location.reload();
+      },
+      async startAndRequestSensor() {
+        // iOS 13+ 需要权限
+        if (typeof DeviceMotionEvent !== 'undefined' && DeviceMotionEvent.requestPermission) {
+          try {
+            const res = await DeviceMotionEvent.requestPermission();
+            if (res === 'granted') {
+              this.gyroAvailable = true;
+            } else {
+              this.gyroAvailable = false;
+            }
+          } catch(e) {
+            this.gyroAvailable = false;
           }
-        }else{
-          block.material.color.set(0xfacc15); // 黄色错误
+        } else {
+          // 非 iOS 或无需授权
+          this.gyroAvailable = true;
         }
+        this.started = true;
+      },
+      startWithoutGyro() {
+        this.gyroAvailable = false;
+        this.started = true;
       }
     },
-    resetGame() {
-      this.score=0; this.gameOver=false; this.currentStep=0;
-      this.targetSequence=[];
-      this.clickableBlocks.forEach(b=>this.scene.remove(b));
-      this.clickableBlocks=[];
-      this.scene.clear();
-      this.initThree(document.getElementById('game'));
+    mounted() {
+      // 只在挂载后初始化三维游戏
+      this.initThreeGame();
+    },
+    beforeUnmount() {
+      // TODO: 清理
+    },
+    methods: {
+      // 合并 methods：把之前的方法保留
+      togglePause() { this.running = !this.running; },
+      restart() { location.reload(); },
+      async startAndRequestSensor() {
+        if (typeof DeviceMotionEvent !== 'undefined' && DeviceMotionEvent.requestPermission) {
+          try {
+            const res = await DeviceMotionEvent.requestPermission();
+            if (res === 'granted') {
+              this.gyroAvailable = true;
+            } else {
+              this.gyroAvailable = false;
+            }
+          } catch(e) { this.gyroAvailable = false; }
+        } else {
+          this.gyroAvailable = true;
+        }
+        this.started = true;
+      },
+      startWithoutGyro() { this.gyroAvailable = false; this.started = true; },
+
+      initThreeGame() {
+        // 基本参数
+        const self = this;
+        const container = document.getElementById('canvas-container');
+        const width = Math.min(window.innerWidth, 600); // 限制最大宽度方便调试
+        const height = window.innerHeight;
+
+        // Renderer
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(width, height);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+        container.appendChild(renderer.domElement);
+        renderer.domElement.style.pointerEvents = 'auto';
+
+        // Scene & Camera
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x021025);
+
+        const camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 2000);
+        camera.position.set(0, 45, 60);
+        camera.lookAt(0, 0, 0);
+
+        // 简单光照
+        const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 0.7);
+        scene.add(hemi);
+        const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+        dir.position.set(5, 10, 7);
+        scene.add(dir);
+
+        // 地板（下行轨道视觉）
+        const track = new THREE.Group();
+        scene.add(track);
+
+        const groundGeom = new THREE.PlaneGeometry(40, 1000, 10, 200);
+        const groundMat = new THREE.MeshStandardMaterial({ color: 0x07203a, roughness: 0.9, metalness: 0.1, side: THREE.DoubleSide });
+        const ground = new THREE.Mesh(groundGeom, groundMat);
+        ground.rotation.x = -Math.PI/2;
+        ground.position.y = -6;
+        ground.position.z = 0;
+        scene.add(ground);
+
+        // 轨道两侧边界
+        const sideGeo = new THREE.BoxGeometry(1, 6, 1000);
+        const leftSide = new THREE.Mesh(sideGeo, new THREE.MeshStandardMaterial({ color: 0x073047 }));
+        const rightSide = leftSide.clone();
+        leftSide.position.set(-20.5, -3, 0);
+        rightSide.position.set(20.5, -3, 0);
+        scene.add(leftSide); scene.add(rightSide);
+
+        // 玩家小球（受控）
+        const player = {
+          mesh: null,
+          radius: 1.6,
+          pos: new THREE.Vector3(0, -4, 20),
+          vel: new THREE.Vector3(0,0,0),
+          mass: 1,
+          power: 1, // 吃加分点后增强
+        };
+        const pGeo = new THREE.SphereGeometry(player.radius, 24, 18);
+        const pMat = new THREE.MeshStandardMaterial({ color: 0x64fdea, roughness:0.3, emissive:0x003f3f, emissiveIntensity:0.2 });
+        const pMesh = new THREE.Mesh(pGeo, pMat);
+        pMesh.castShadow = true;
+        scene.add(pMesh);
+        player.mesh = pMesh;
+
+        // 控制区域边界（x: -18..18, z: -100..100, y固定）
+        const bounds = { minX:-18, maxX:18, minZ:-300, maxZ:150 };
+
+        // 敌人/收集/障碍列表
+        const enemies = [];
+        const pickups = [];
+        const obstacles = [];
+
+        // 计时器 / 进度（游戏会持续向下移动场景）
+        let lastTime = performance.now();
+        let accumulated = 0;
+        let spawnTimer = 0;
+        let difficultyTimer = 0;
+        let spawnInterval = 1400; // 毫秒，随难度下降
+        let enemySpeedBase = 0.06; // 基础速度
+        let forwardScroll = 0; // 场景下移动位移，用于视觉的下行效果
+
+        // 工具：创建敌人、收集点、障碍
+        function createEnemy(zPos) {
+          const r = 1.2 + Math.random()*0.8;
+          const geo = new THREE.SphereGeometry(r, 12, 10);
+          const mat = new THREE.MeshStandardMaterial({ color: 0xff5a5a, roughness: 0.5, emissive:0x440000 });
+          const m = new THREE.Mesh(geo, mat);
+          const x = (Math.random()*2-1) * 16;
+          m.position.set(x, -4, zPos);
+          scene.add(m);
+          enemies.push({ mesh: m, radius: r, speed: enemySpeedBase + Math.random()*0.06 });
+        }
+        function createPickup(zPos) {
+          const r = 0.55;
+          const geo = new THREE.SphereGeometry(r, 12, 10);
+          const mat = new THREE.MeshStandardMaterial({ color: 0x7af28f, emissive:0x113f1a });
+          const m = new THREE.Mesh(geo, mat);
+          const x = (Math.random()*2-1) * 16;
+          m.position.set(x, -2.2, zPos);
+          scene.add(m);
+          pickups.push({ mesh: m, radius: r, value: 10 + Math.floor(Math.random()*10) });
+        }
+        function createObstacle(zPos) {
+          const w = 2 + Math.random()*4;
+          const h = 1.2 + Math.random()*3;
+          const d = 1.5 + Math.random()*3;
+          const geo = new THREE.BoxGeometry(w,h,d);
+          const mat = new THREE.MeshStandardMaterial({ color: 0x4a6b7a, roughness: 0.9 });
+          const m = new THREE.Mesh(geo, mat);
+          const x = (Math.random()*2-1) * 14;
+          m.position.set(x, -3.5, zPos);
+          scene.add(m);
+          obstacles.push({ mesh: m, box: { w,h,d }, radius: Math.max(w,h,d)/2 });
+        }
+
+        // 初始生成一些项目
+        for (let i=0;i<12;i++){
+          const z = -i*10 + 40;
+          if (Math.random()<0.35) createPickup(z);
+          if (Math.random()<0.4) createEnemy(z - 10*Math.random());
+          if (Math.random()<0.22) createObstacle(z - 5*Math.random());
+        }
+
+        // 辅助：球球碰撞检测（球对球）
+        function checkSphereCollision(aPos, aRad, bPos, bRad){
+          return aPos.distanceTo(bPos) < (aRad + bRad);
+        }
+
+        // 控制输入：陀螺仪
+        let deviceAlpha=0, deviceBeta=0, deviceGamma=0;
+        function handleOrientation(e) {
+          // e.gamma  左右倾斜 -90..90  （x轴）
+          // e.beta   前后倾斜 -180..180（y轴）
+          deviceGamma = e.gamma || 0;
+          deviceBeta = e.beta || 0;
+        }
+        // DeviceMotionEvent fallback
+        function handleMotion(e) {
+          if (!e.accelerationIncludingGravity) return;
+          // 简单映射 gravity 到 input
+        }
+
+        // 触摸虚拟摇杆（当陀螺不可用）
+        let knob = null;
+        let knobOrigin = null;
+        let knobDragging = false;
+        const maxKnob = 44;
+        function setupJoystick() {
+          knob = document.getElementById('knob');
+          if (!knob) return;
+          knob.style.touchAction = 'none';
+          knob.addEventListener('pointerdown', (ev) => {
+            knob.setPointerCapture(ev.pointerId);
+            knobDragging = true;
+            if (!knobOrigin) {
+              const rect = knob.parentElement.getBoundingClientRect();
+              knobOrigin = { x: rect.left + rect.width/2, y: rect.top + rect.height/2 };
+            }
+          });
+          knob.addEventListener('pointermove', (ev) => {
+            if (!knobDragging) return;
+            const dx = ev.clientX - knobOrigin.x;
+            const dy = ev.clientY - knobOrigin.y;
+            const mag = Math.min(maxKnob, Math.hypot(dx,dy));
+            const ang = Math.atan2(dy, dx);
+            const nx = Math.cos(ang) * mag;
+            const ny = Math.sin(ang) * mag;
+            knob.style.transform = `translate(${nx}px, ${ny}px)`;
+            // 映射到 inputX, inputZ （注意：屏幕 y 下为正，游戏中 z 方向取负向往下）
+            self.inputX = Math.max(-1, Math.min(1, nx / maxKnob));
+            self.inputZ = Math.max(-1, Math.min(1, -ny / maxKnob));
+          });
+          const upHandler = (ev) => {
+            knobDragging = false;
+            knob.style.transform = 'translate(0,0)';
+            self.inputX = 0; self.inputZ = 0;
+          };
+          knob.addEventListener('pointerup', upHandler);
+          knob.addEventListener('pointercancel', upHandler);
+          knob.addEventListener('lostpointercapture', upHandler);
+        }
+        setupJoystick();
+
+        // 监听陀螺仪（只在用户点击开始并授权后才启用）
+        window.addEventListener('deviceorientation', (e) => {
+          // 但只有在 started 并 gyroAvailable 时才映射到 input
+          if (!self.started || !self.gyroAvailable) return;
+          deviceGamma = e.gamma || 0; deviceBeta = e.beta || 0;
+          // 简单映射：deviceGamma (-45..45) -> inputX
+          const gx = Math.max(-45, Math.min(45, deviceGamma)) / 45;
+          const gz = Math.max(-45, Math.min(45, deviceBeta-5)) / 45; // 调整前后敏感度
+          self.inputX = gx;
+          self.inputZ = gz;
+        });
+
+        // 触摸屏也可以点击以短促冲刺（可选）
+        let lastTap = 0;
+        renderer.domElement.addEventListener('touchstart', (e)=>{
+          const t = performance.now();
+          if (t - lastTap < 280) {
+            // 双击快速向前冲刺（示例）
+            player.vel.z -= 0.6;
+          }
+          lastTap = t;
+        }, {passive:true});
+
+        // 主循环
+        function tick(now){
+          const dt = Math.min(40, now - lastTime) / 1000; // cap dt
+          lastTime = now;
+
+          if (!self.running || !self.started || self.gameOver) {
+            renderer.render(scene, camera);
+            requestAnimationFrame(tick);
+            return;
+          }
+
+          // 增难度计时
+          difficultyTimer += dt*1000;
+          if (difficultyTimer > 8000) {
+            difficultyTimer = 0;
+            spawnInterval = Math.max(400, spawnInterval - 80); // spawn 频率增加
+            enemySpeedBase += 0.01; // 敌人更快
+            self.level += 1;
+          }
+
+          // 根据输入向量生成加速度（简单模拟）
+          const accelScale = 18.0 * (0.4 + player.power*0.3); // power 增强操控
+          const ax = self.inputX * accelScale;
+          const az = self.inputZ * accelScale;
+          // 阻力
+          const drag = 3.0;
+          // 更新速度
+          player.vel.x += (ax - player.vel.x*drag) * dt;
+          player.vel.z += (az - player.vel.z*drag) * dt;
+
+          // 限制最大速度（随power略增）
+          const maxSpeed = 12 + player.power*6;
+          if (player.vel.length() > maxSpeed) player.vel.setLength(maxSpeed);
+
+          // 位置更新
+          player.pos.addScaledVector(player.vel, dt);
+          // 限界处理（弹回）
+          if (player.pos.x < bounds.minX + player.radius) { player.pos.x = bounds.minX + player.radius; player.vel.x *= -0.35; }
+          if (player.pos.x > bounds.maxX - player.radius) { player.pos.x = bounds.maxX - player.radius; player.vel.x *= -0.35; }
+          if (player.pos.z < bounds.minZ + player.radius) { player.pos.z = bounds.minZ + player.radius; player.vel.z *= -0.35; }
+          if (player.pos.z > bounds.maxZ - player.radius) { player.pos.z = bounds.maxZ - player.radius; player.vel.z *= -0.35; }
+
+          // update player mesh
+          player.mesh.position.copy(player.pos);
+
+          // 场景视觉向下滚动（forwardScroll 增加 => 场景元素往下移动）
+          forwardScroll += (20 + self.level*6) * dt; // 随等级提升滚动变快
+          // move ground texture? (我们直接移动物件的 z)
+          // 更新敌人、拾取、障碍：他们的 z 减小（向玩家方向移动）
+          const allLists = [
+            { arr: enemies, speedFactor: 1.0 },
+            { arr: pickups, speedFactor: 1.0 },
+            { arr: obstacles, speedFactor: 1.0 }
+          ];
+          for (const group of allLists) {
+            for (let i=group.arr.length-1;i>=0;i--) {
+              const it = group.arr[i];
+              // 每帧让物体靠近玩家（从远处向下出现）
+              it.mesh.position.z += ( (enemySpeedBase + (Math.random()*0.02)) * 60 ) * dt * (group.speedFactor);
+              // 若移出视野（靠近玩家 z 超过 bounds.maxZ + 60）则移除
+              if (it.mesh.position.z > bounds.maxZ + 80) {
+                // 移出场景
+                scene.remove(it.mesh);
+                group.arr.splice(i,1);
+                continue;
+              }
+            }
+          }
+
+          // 生成新的东西（spawnInterval 控制频率）
+          spawnTimer += dt*1000;
+          if (spawnTimer > spawnInterval) {
+            spawnTimer = 0;
+            // spawn 在远处（minZ .. minZ + 30）
+            const zSpawn = bounds.minZ + 30;
+            const r = Math.random();
+            if (r < 0.45) createEnemy(zSpawn);
+            else if (r < 0.75) createPickup(zSpawn);
+            else createObstacle(zSpawn);
+          }
+
+          // 碰撞检测：玩家 vs pickups
+          for (let i = pickups.length - 1; i >= 0; i--) {
+            const p = pickups[i];
+            if (checkSphereCollision(player.pos, player.radius, p.mesh.position, p.radius)) {
+              // 得分并移除
+              self.score += p.value;
+              player.power = Math.min(5, player.power + 0.12); // 吃了变强
+              scene.remove(p.mesh);
+              pickups.splice(i,1);
+              // 放特效（简单放大并淡出）
+            }
+          }
+
+          // 玩家 vs enemies
+          for (let i = enemies.length - 1; i >= 0; i--) {
+            const en = enemies[i];
+            if (checkSphereCollision(player.pos, player.radius, en.mesh.position, en.radius)) {
+              // 碰到扣血并短暂无敌
+              self.lives -= 1;
+              // 碰撞反馈：推动玩家
+              const push = new THREE.Vector3().subVectors(player.pos, en.mesh.position).setLength(4);
+              player.vel.add(push);
+              scene.remove(en.mesh);
+              enemies.splice(i,1);
+              // 简单死亡判定
+              if (self.lives <= 0) {
+                self.gameOver = true;
+                self.running = false;
+              }
+            }
+          }
+
+          // 玩家 vs obstacles (box) — 用简化球-球检测
+          for (let i = obstacles.length - 1; i >= 0; i--) {
+            const ob = obstacles[i];
+            if (checkSphereCollision(player.pos, player.radius, ob.mesh.position, ob.radius)) {
+              // 若速度过快，则碰撞会有强烈反馈
+              player.vel.multiplyScalar(-0.45);
+              // 扣分或扣血（根据大小）
+              self.lives -= 0.5;
+              // remove obstacle sometimes
+              if (Math.random() < 0.3) {
+                scene.remove(ob.mesh);
+                obstacles.splice(i,1);
+              }
+              if (self.lives <= 0) {
+                self.gameOver = true;
+                self.running = false;
+              }
+            }
+          }
+
+          // 简单视觉：让摄像机微跟随玩家 x,z
+          camera.position.x += (player.pos.x*0.06 - camera.position.x) * 0.12;
+          camera.position.z += (player.pos.z*0.02 - camera.position.z) * 0.02;
+          camera.lookAt(player.pos.x*0.5, player.pos.y, player.pos.z - 12);
+
+          // 微小旋转让球更灵动
+          player.mesh.rotation.x += player.vel.z * 0.01;
+          player.mesh.rotation.z += player.vel.x * 0.01;
+
+          renderer.render(scene, camera);
+          requestAnimationFrame(tick);
+        }
+
+        lastTime = performance.now();
+        requestAnimationFrame(tick);
+
+        // 监听窗口大小
+        window.addEventListener('resize', ()=> {
+          const w = Math.min(window.innerWidth, 600);
+          const h = window.innerHeight;
+          renderer.setSize(w,h);
+          camera.aspect = w/h;
+          camera.updateProjectionMatrix();
+        });
+      }
     }
-  },
-  mounted() {
-    this.initThree(document.getElementById('game'));
-  }
-}).mount('#app');
-</script>
+  }).mount('#app');
+  </script>
 </body>
 </html>
